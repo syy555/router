@@ -12,4 +12,4 @@ annotation class RouterPath(val value: String = "")
 
 @Target(AnnotationTarget.FIELD)
 @Retention(AnnotationRetention.RUNTIME)
-annotation class RouterParameter(val value: String = "")
+annotation class RouterField(val value: String = "")

@@ -1,5 +1,6 @@
 package com.cat.router
 
+import android.content.Context
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import fm.qingting.router.annotations.RouterPath
@@ -11,4 +12,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
     }
+
+
+}
+@RouterPath("/start")
+fun start(asd: Context){
+
 }
