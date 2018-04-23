@@ -11,7 +11,7 @@ abstract class RouterIntercept(val path: String) {
 
     abstract fun launch(context: Context,
                         uri: Uri,
-                        callBack: RouterTaskCallBack?,
+                        taskId: String?,
                         options: Bundle?): Boolean
 
 }

@@ -10,6 +10,6 @@ package fm.qingting.router.annotations
 annotation class RouterPath(val value: String = "")
 
 
-@Target(AnnotationTarget.FIELD)
+@Target(AnnotationTarget.FIELD, AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.RUNTIME)
 annotation class RouterField(val value: String = "")

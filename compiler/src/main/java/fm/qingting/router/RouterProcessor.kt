@@ -1,7 +1,6 @@
 package fm.qingting.router
 
 import com.google.auto.service.AutoService
-import com.google.common.reflect.TypeToken
 import com.squareup.javapoet.ClassName
 import com.squareup.javapoet.CodeBlock
 import com.squareup.javapoet.JavaFile
@@ -25,7 +24,9 @@ import javax.tools.Diagnostic
 @AutoService(Processor::class)
 @SuppressWarnings("unused")
 class RouterProcessor : AbstractProcessor() {
-
+    private val contextClassName = ClassName.get("android.content", "Context")
+    private val uriClassName = ClassName.get("android.net", "Uri")
+    private val bundleClassName = ClassName.get("android.os", "Bundle")
     override fun getSupportedAnnotationTypes(): Set<String> {
         return setOf(RouterPath::class.java.canonicalName)
     }
@@ -78,7 +79,7 @@ class RouterProcessor : AbstractProcessor() {
 
     @Throws(IOException::class)
     private fun generateClassRouter(moduleName: String?, map: Map<String, Element>, methodMap: Map<String, ExecutableElement>) {
-        if (map.isEmpty()&&methodMap.isEmpty()) {
+        if (map.isEmpty() && methodMap.isEmpty()) {
             return
         }
         val builder = classBuilder(if (moduleName != null && moduleName.isNotEmpty())
@@ -86,46 +87,40 @@ class RouterProcessor : AbstractProcessor() {
         else
             CLASS_NAME)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
-        builder.addField(CLASS_TYPE, "ROUTER_MAP", Modifier.PUBLIC,
-                Modifier.STATIC, Modifier.FINAL)
-        builder.addField(METHOD_TYPE, "METHOD_MAP", Modifier.PUBLIC,
-                Modifier.STATIC, Modifier.FINAL)
-        val mcBuilder = MethodSpec.constructorBuilder()
+        var mcBuilder = MethodSpec.constructorBuilder()
                 .addModifiers(Modifier.PRIVATE)
+        builder.addMethod(mcBuilder.build())
+        mcBuilder = MethodSpec.methodBuilder("init")
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
         builder.addMethod(mcBuilder.build())
         //
         val scBuilder = CodeBlock.builder()
         scBuilder.addStatement("java.util.Map<String, Class<?>> classCache=new java.util.HashMap<>()")
-        scBuilder.addStatement("java.util.Map<String, fm.qingting.router.RouterIntercept> methodCache=new java.util.HashMap<>()")
         for (key in map.keys) {
-            scBuilder.addStatement(String.format(Locale.getDefault(),
-                    "classCache.put(\"%s\",%s.class)", key,
-                    map[key].toString()))
+            scBuilder.addStatement("classCache.put(\"$key\",${map[key]}.class)")
         }
-        if (processingEnv.options.containsKey(ATTACH_NAME)) {
-            assertIsEmpty(processingEnv.options[ATTACH_NAME])
-            processingEnv.options[ATTACH_NAME]!!.split(",").forEach({
-                scBuilder.addStatement(String.format(Locale.getDefault(),
-                        "classCache.putAll(fm.qingting.router.%s.ROUTER_MAP)",
-                        it))
-                scBuilder.addStatement(String.format(Locale.getDefault(),
-                        "methodCache.putAll(fm.qingting.router.%s.METHOD_MAP)",
-                        it))
-            })
-
-        }
-        for (key in methodMap.keys) {
-            val method = methodMap[key]
+        methodMap.keys.forEach {
+            val method = methodMap[it]
             if (checkHasNoErrors(method)) {
                 val classElement = method?.enclosingElement as TypeElement
-                scBuilder.beginControlFlow("").addStatement("").endControlFlow()
-                scBuilder.addStatement(String.format(Locale.getDefault(),
-                        "methodCache.put(\"%s\",%s::%s)", key, classElement.toString(),
-                        methodMap[key]?.simpleName))
+                scBuilder.beginControlFlow("Router.INSTANCE.registerIntercept(new RouterIntercept(\"$it\")")
+                        .beginControlFlow("public boolean launch($contextClassName context, $uriClassName uri, String taskId, $bundleClassName options)")
+                        .addStatement("${classElement.qualifiedName}.${method.simpleName}(${getParameterString(method.parameters)})")
+                        .addStatement("return true")
+                        .endControlFlow()
+                        .endControlFlow().addStatement(")")
             }
         }
-        scBuilder.addStatement("ROUTER_MAP=java.util.Collections.unmodifiableMap(classCache)")
-        scBuilder.addStatement("METHOD_MAP=java.util.Collections.unmodifiableMap(methodCache)")
+        scBuilder.addStatement("Router.INSTANCE.init(classCache)")
+        if (processingEnv.options.containsKey(ATTACH_NAME)) run {
+            assertIsEmpty(processingEnv.options[ATTACH_NAME])
+            processingEnv.options[ATTACH_NAME]?.split(",")?.forEach {
+                scBuilder.addStatement(String.format(Locale.getDefault(),
+                        "fm.qingting.router.%s.init()",
+                        processingEnv.options[ATTACH_NAME]))
+            }
+
+        }
         builder.addStaticBlock(scBuilder.build())
         val javaFile = JavaFile.builder("fm.qingting.router", builder.build()).build()
         javaFile.writeTo(processingEnv.filer)
@@ -152,15 +147,43 @@ class RouterProcessor : AbstractProcessor() {
         return true
     }
 
+    private fun getParameterString(parameterList: List<VariableElement>): String {
+        var result = ""
+        parameterList.forEach {
+            when (it.asType().toString()) {
+                contextClassName.toString() -> {
+                    if (!result.isEmpty()) {
+                        result += ","
+                    }
+                    result += "context"
+                }
+                uriClassName.toString() -> {
+                    if (!result.isEmpty()) {
+                        result += ","
+                    }
+                    result += "uri"
+                }
+                "java.lang.Integer" -> {
+                    if (!result.isEmpty()) {
+                        result += ","
+                    }
+                    result += "taskId"
+                }
+                bundleClassName.toString() -> {
+                    if (!result.isEmpty()) {
+                        result += ","
+                    }
+                    result += "options"
+                }
+            }
+        }
+        return result
+    }
+
     companion object {
         private val CLASS_NAME = "RouterContainer"
         private val MODULE_NAME = "ModuleName"
         private val ATTACH_NAME = "Include"
-        private val CLASS_TYPE = object : TypeToken<Map<String, Class<*>>>() {
-        }.type
-        private val METHOD_TYPE = object : TypeToken<Map<String, Runnable>>() {
-        }.type
-
     }
 
 }

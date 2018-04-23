@@ -12,7 +12,7 @@ import android.support.v4.app.ActivityCompat
  * Created by lee on 2018/4/11.
  */
 class DefaultRouterLauncher : RouterLauncher {
-    override fun launch(context: Context, uri: Uri, clazz: Class<*>, callBack: RouterTaskCallBack?, options: Bundle?): Boolean {
+    override fun launch(context: Context, uri: Uri, clazz: Class<*>, taskId: String?, options: Bundle?): Boolean {
         if (Activity::class.java.isAssignableFrom(clazz)) {
             val intent = Intent(context, clazz)
             if (context is Application) {
