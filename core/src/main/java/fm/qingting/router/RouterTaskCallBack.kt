@@ -6,5 +6,5 @@ import android.os.Bundle
  * Created by lee on 2018/4/10.
  */
 interface RouterTaskCallBack {
-    fun done(result: Bundle)
+    fun done(result: Bundle?)
 }

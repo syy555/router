@@ -9,7 +9,6 @@ import android.os.Parcelable
 import android.text.TextUtils
 import android.util.Log
 import fm.qingting.router.annotations.RouterField
-import qingting.fm.routercore.BuildConfig
 import java.io.Serializable
 import java.lang.reflect.Field
 
@@ -82,9 +81,7 @@ object RouterHelper {
 
     private fun uriBinding(parameter: RouterField, uri: Uri,
                            field: Field, declaring: Any) {
-        if (uri == null) {
-            return
-        }
+
         try {
             val value = findParameter(parameter, uri, field)
             if (value != null) {
@@ -101,7 +98,7 @@ object RouterHelper {
 
     }
 
-    private fun findParameter(parameter: RouterField, uri: Uri, field: Field): String {
+    private fun findParameter(parameter: RouterField, uri: Uri, field: Field): String? {
         val key = if (TextUtils.isEmpty(parameter.value)) field.name else parameter.value
         return uri.getQueryParameter(key)
     }
@@ -116,6 +113,7 @@ object RouterHelper {
     private fun bindFieldValueWithString(value: String, field: Field, declaring: Any) {
         val type = field.type
         when (type) {
+            RouterTaskCallBack::class.java -> field.set(declaring, Router.pop(value))
             Boolean::class.javaPrimitiveType -> field.setBoolean(declaring, java.lang.Boolean.valueOf(value))
             Boolean::class.java -> field.set(declaring, java.lang.Boolean.valueOf(value))
             Byte::class.javaPrimitiveType -> field.setByte(declaring, java.lang.Byte.valueOf(value)!!)
@@ -135,7 +133,7 @@ object RouterHelper {
     }
 
 
-    private fun bundleBinding(parameter: RouterField, bundle: Bundle,
+    private fun bundleBinding(parameter: RouterField, bundle: Bundle?,
                               field: Field, declaring: Any) {
         if (bundle == null) {
             return
@@ -295,32 +293,23 @@ object RouterHelper {
      * @throws IllegalAccessException throw Exception.
      */
     @Throws(IllegalAccessException::class)
+    @Suppress("UNCHECKED_CAST")
     private fun saveFieldArrayValue(key: String, bundle: Bundle,
                                     field: Field, declaring: Any) {
 
-        val type = field.type
-        if (Boolean::class.javaPrimitiveType == type) {
-            bundle.putBooleanArray(key, field.get(declaring) as BooleanArray)
-        } else if (Byte::class.javaPrimitiveType == type) {
-            bundle.putByteArray(key, field.get(declaring) as ByteArray)
-        } else if (Char::class.javaPrimitiveType == type) {
-            bundle.putCharArray(key, field.get(declaring) as CharArray)
-        } else if (Short::class.javaPrimitiveType == type) {
-            bundle.putShortArray(key, field.get(declaring) as ShortArray)
-        } else if (Int::class.javaPrimitiveType == type) {
-            bundle.putIntArray(key, field.get(declaring) as IntArray)
-        } else if (Float::class.javaPrimitiveType == type) {
-            bundle.putFloatArray(key, field.get(declaring) as FloatArray)
-        } else if (Double::class.javaPrimitiveType == type) {
-            bundle.putDoubleArray(key, field.get(declaring) as DoubleArray)
-        } else if (String::class.java == type) {
-            bundle.putStringArray(key, field.get(declaring) as Array<String>)
-        } else if (CharSequence::class.java.isAssignableFrom(type)) {
-            bundle.putCharSequenceArray(key, field.get(declaring) as Array<CharSequence>)
-        } else if (Parcelable::class.java.isAssignableFrom(type)) {
-            bundle.putParcelableArray(key, field.get(declaring) as Array<Parcelable>)
-        } else if (Serializable::class.java.isAssignableFrom(type)) {
-            bundle.putSerializable(key, field.get(declaring) as Array<Serializable>)
+        val type = field.type.componentType
+        when {
+            Boolean::class.javaPrimitiveType == type -> bundle.putBooleanArray(key, field.get(declaring) as BooleanArray)
+            Byte::class.javaPrimitiveType == type -> bundle.putByteArray(key, field.get(declaring) as ByteArray)
+            Char::class.javaPrimitiveType == type -> bundle.putCharArray(key, field.get(declaring) as CharArray)
+            Short::class.javaPrimitiveType == type -> bundle.putShortArray(key, field.get(declaring) as ShortArray)
+            Int::class.javaPrimitiveType == type -> bundle.putIntArray(key, field.get(declaring) as IntArray)
+            Float::class.javaPrimitiveType == type -> bundle.putFloatArray(key, field.get(declaring) as FloatArray)
+            Double::class.javaPrimitiveType == type -> bundle.putDoubleArray(key, field.get(declaring) as DoubleArray)
+            String::class.java == type -> bundle.putStringArray(key, field.get(declaring) as Array<String>)
+            CharSequence::class.java.isAssignableFrom(type) -> bundle.putCharSequenceArray(key, field.get(declaring) as Array<CharSequence>)
+            Parcelable::class.java.isAssignableFrom(type) -> bundle.putParcelableArray(key, field.get(declaring) as Array<Parcelable>)
+            Serializable::class.java.isAssignableFrom(type) -> bundle.putSerializable(key, field.get(declaring) as Array<Serializable>)
         }
     }
 

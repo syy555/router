@@ -7,9 +7,10 @@ package fm.qingting.router.annotations
 
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
-annotation class RouterPath(val value: String = "")
+annotation class RouterPath(val value: String = "", val host: String = "")
 
+//
+//@Target(AnnotationTarget.FIELD)
+//@Retention(AnnotationRetention.RUNTIME)
+//annotation class RouterField(val value: String = "")
 
-@Target(AnnotationTarget.FIELD, AnnotationTarget.PROPERTY)
-@Retention(AnnotationRetention.RUNTIME)
-annotation class RouterField(val value: String = "")

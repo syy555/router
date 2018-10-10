@@ -22,10 +22,9 @@ class Main2Activity : AppCompatActivity() {
 
         fab.setOnClickListener {
             Router.launch(this, Uri.parse("//app.qingting.fm/module1?title=123"),object:RouterTaskCallBack{
-                override fun done(result: Bundle) {
-                    Toast.makeText(applicationContext,result.getString("123"),Toast.LENGTH_SHORT).show()
+                override fun done(result: Bundle?) {
+                    Toast.makeText(applicationContext,result?.getString("123"),Toast.LENGTH_SHORT).show()
                 }
-
             })
         }
     }

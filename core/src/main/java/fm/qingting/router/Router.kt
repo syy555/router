@@ -1,32 +1,35 @@
+@file:Suppress("unused")
+
 package fm.qingting.router
 
+import android.arch.lifecycle.Lifecycle
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.support.annotation.MainThread
-import android.util.Log
 import java.util.*
+import kotlin.collections.HashSet
 
 /**
  * Created by lee on 2018/4/10.
  */
 object Router {
-    const val TASK_ID = "router_task_callback_id"
-
-    private var pathMap = HashMap<String, Class<*>>()
+    const val TASK_NAME = "router_task_callback_id"
+    private var methodUrlSet = HashSet<String>()
+    private var urlMap = HashMap<String, Class<*>>()
     private var mIntercepts = HashMap<String, RouterIntercept>()
     private val defaultRouterLauncher = DefaultRouterLauncher()
+    private var defaultRouteIntercept: RouterIntercept? = null
+    private val methodRouteInterceptList: MutableList<RouterIntercept> = arrayListOf()
     private var launcherMap = HashMap<Class<*>, RouterLauncher>()
-    fun init(map: Map<String, Class<*>>) {
-        map.keys.forEach { it ->
-            Log.d("123", it)
-            if (pathMap.containsKey(it)) {
-                throw RuntimeException(String.format(Locale.getDefault(), "key:%s already exist",
-                        it))
-            }
+    var defaultHost = ""
+    fun registerUrl(path: String, target: Class<*>) {
+        if (urlMap.containsKey(path)) {
+            throw RuntimeException(String.format(Locale.getDefault(), "key:%s already exist",
+                    path))
         }
-        pathMap.putAll(map)
+        urlMap[path] = target
     }
 
     /**
@@ -46,17 +49,55 @@ object Router {
     }
 
     fun registerLauncher(type: Class<*>, routerLauncher: RouterLauncher) {
-        launcherMap[type] = routerLauncher
+        this.launcherMap[type] = routerLauncher
+    }
+
+    @JvmOverloads
+    fun registerMethodIntercept(routerIntercept: RouterIntercept, urlKeys: Set<String> = HashSet()) {
+        if (!routerIntercept.url.isEmpty()) {
+            throw RuntimeException(String.format(Locale.getDefault(), "the url of frontIntercept must be empty, found:%s ",
+                    routerIntercept.url))
+        }
+        if (!urlKeys.intersect(methodUrlSet).isEmpty()) {
+            if (!urlKeys.isEmpty())
+                throw RuntimeException(String.format(Locale.getDefault(), "the url of frontIntercept must be empty, found:%s ",
+                        urlKeys.intersect(methodUrlSet).first().toString()))
+        }
+        methodUrlSet.addAll(urlKeys)
+        methodRouteInterceptList.add(routerIntercept)
+    }
+
+
+    fun registerDefaultIntercept(routerIntercept: RouterIntercept) {
+        if (defaultRouteIntercept != null) {
+            throw RuntimeException("defaultRouteIntercept can only be set once")
+        }
+        if (!routerIntercept.url.isEmpty()) {
+            throw RuntimeException(String.format(Locale.getDefault(), "the url of defaultIntercept must be empty, found:%s ",
+                    routerIntercept.url))
+        }
+        defaultRouteIntercept = routerIntercept
     }
 
 
     fun registerIntercept(routerIntercept: RouterIntercept) {
-        if (mIntercepts.containsKey(routerIntercept.path)) {
+        if (mIntercepts.containsKey(routerIntercept.url) || methodUrlSet.contains(routerIntercept.url)) {
             throw RuntimeException(String.format(Locale.getDefault(), "key:%s already exist",
-                    routerIntercept.path))
+                    routerIntercept.url))
         }
-        mIntercepts[routerIntercept.path] = routerIntercept
+        mIntercepts[routerIntercept.url] = routerIntercept
     }
+
+    fun unRegisterIntercept(routerIntercept: RouterIntercept) {
+        if (mIntercepts.containsKey(routerIntercept.url) && mIntercepts[routerIntercept.url] == routerIntercept) {
+            mIntercepts.remove(routerIntercept.url)
+
+        } else {
+            throw RuntimeException(String.format(Locale.getDefault(), "routerIntercept:%s already exist",
+                    routerIntercept.url))
+        }
+    }
+
 
     /**
      * execute Router callback with taskId.
@@ -69,47 +110,60 @@ object Router {
      */
     @MainThread
     @JvmOverloads
-    fun launch(context: Context, uri: Uri, callBack: RouterTaskCallBack? = null, options: Bundle? = null): Boolean {
-        var finalUri = uri
-        val host = finalUri.host
-        var taskId: String? = null
-        if (callBack != null) {
-            val pair = packTask(finalUri, callBack)
-            taskId = pair.first
-            finalUri = pair.second
-        }
-        return if (host.equals(RouterHost.ACTION.toString(), true) || host.equals(RouterHost.APP.toString(), true)) {
-            val clazz = pathMap[finalUri.path]
+    fun launch(context: Context, uri: Uri, callBack: RouterTaskCallBack? = null, options: Bundle? = null, lifecycle: Lifecycle? = null): Boolean {
 
-            if (clazz != null) {
-                launcherMap.keys.forEach {
-                    if (it.isAssignableFrom(clazz)) {
-                        val launcher = launcherMap[it]
-                        if (launcher != null && launcher.launch(context, finalUri, clazz, taskId, options)) {
-                            return true
-                        }
+
+        if (parseActionPath(context, uri, callBack, options, lifecycle)) {
+            return true
+        }
+        methodRouteInterceptList.forEach {
+            if (it.launch(context, uri, callBack, options, lifecycle)) {
+                return true
+            }
+        }
+        val clazz = urlMap[uri.host + uri.path]
+        if (clazz != null) {
+            var finalUri = uri
+            var taskId: String? = null
+            if (callBack != null) {
+                val pair = packTask(finalUri, callBack)
+                taskId = pair.first
+                finalUri = pair.second
+            }
+            launcherMap.keys.forEach {
+                if (it.isAssignableFrom(clazz)) {
+                    val launcher = launcherMap[it]
+                    if (launcher != null && launcher.launch(context, finalUri, clazz, options)) {
+                        return true
                     }
                 }
-                if (defaultRouterLauncher.launch(context, finalUri, clazz, taskId, options)) {
-                    return true
-                }
             }
-            parseActionPath(context, finalUri, taskId, options)
-        } else {
-            false
+            if (defaultRouterLauncher.launch(context, finalUri, clazz, options)) {
+                return true
+            }
+            val tempTaskId = taskId
+            if (tempTaskId != null) {
+                RouterTaskPool.pop(tempTaskId)
+            }
         }
+        val tempDefaultRouteIntercept = defaultRouteIntercept
+        if (tempDefaultRouteIntercept != null && tempDefaultRouteIntercept.launch(context, uri, callBack, options, lifecycle)) {
+            return true
+        }
+
+        return false
     }
 
-    private fun parseActionPath(context: Context, uri: Uri, taskId: String?, options: Bundle?): Boolean {
-        val routerIntercept = mIntercepts[uri.path] ?: return false
-        return routerIntercept.launch(context, uri, taskId, options)
+    private fun parseActionPath(context: Context, uri: Uri, callBack: RouterTaskCallBack?, options: Bundle?, lifecycle: Lifecycle?): Boolean {
+        val routerIntercept = mIntercepts[uri.host + uri.path] ?: return false
+        return routerIntercept.launch(context, uri, callBack, options, lifecycle)
     }
 
     private fun packTask(uri: Uri, task: RouterTaskCallBack?): Pair<String?, Uri> {
         val taskId = if (task != null) RouterTaskPool.push(task) else null
 
         val swap = StringBuilder(uri.toString())
-        val taskQuery = (if (swap.indexOf("?") == -1) "?" else "&") + ("$TASK_ID=$taskId")
+        val taskQuery = (if (swap.indexOf("?") == -1) "?" else "&") + ("$TASK_NAME=$taskId")
         val pos = swap.indexOf("#")
         if (pos == -1) {
             swap.append(taskQuery)
@@ -128,14 +182,24 @@ object Router {
      * @param data   demand return data.
      */
     @MainThread
-    fun execute(taskId: String?, data: Bundle) {
-        val id = taskId
-        if (id != null) {
+    fun execute(taskId: String?, data: Bundle?) {
+        if (taskId != null) {
             val task = RouterTaskPool.pop(taskId)
             task?.done(data)
         }
     }
 
+    /**
+     * direct pop the router callback with specific task id
+     *
+     * @param taskId the callback id
+     */
+    fun pop(taskId: String?):RouterTaskCallBack? {
+        if (taskId != null) {
+            return RouterTaskPool.pop(taskId)
+        }
+        return null
+    }
 }
 
 

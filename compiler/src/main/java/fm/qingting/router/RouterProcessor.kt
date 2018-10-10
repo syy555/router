@@ -7,6 +7,7 @@ import com.squareup.javapoet.JavaFile
 import com.squareup.javapoet.MethodSpec
 import com.squareup.javapoet.TypeSpec.classBuilder
 import fm.qingting.router.annotations.RouterPath
+import java.io.File
 import java.io.IOException
 import java.util.*
 import javax.annotation.processing.AbstractProcessor
@@ -26,7 +27,10 @@ import javax.tools.Diagnostic
 class RouterProcessor : AbstractProcessor() {
     private val contextClassName = ClassName.get("android.content", "Context")
     private val uriClassName = ClassName.get("android.net", "Uri")
+    private val callbackClassName = ClassName.get("fm.qingting.router", "RouterTaskCallBack")
     private val bundleClassName = ClassName.get("android.os", "Bundle")
+    private val lifeCycleClassName = ClassName.get("android.arch.lifecycle", "Lifecycle")
+    private lateinit var defaultHost: String
     override fun getSupportedAnnotationTypes(): Set<String> {
         return setOf(RouterPath::class.java.canonicalName)
     }
@@ -35,36 +39,47 @@ class RouterProcessor : AbstractProcessor() {
         return SourceVersion.latestSupported()
     }
 
+    private fun RouterPath.url(): String {
+        if (host.isEmpty()) {
+            return defaultHost + value
+        }
+        return host + value
+    }
 
     override fun process(set: Set<TypeElement>, roundEnv: RoundEnvironment): Boolean {
         val className = processingEnv.options[MODULE_NAME]
         val classCache = HashMap<String, Element>()
         val methodCache = HashMap<String, ExecutableElement>()
-        var routerSet = roundEnv.getElementsAnnotatedWith(RouterPath::class.java)
+        val routerSet = roundEnv.getElementsAnnotatedWith(RouterPath::class.java)
+        val tempHost = processingEnv.options[DEFAULT_HOST]
+        defaultHost = when {
+            tempHost != null -> tempHost
+            else -> ""
+        }
         for (element in ElementFilter.typesIn(routerSet)) {
             if (element.kind == ElementKind.CLASS) {
                 val path = element.getAnnotation(RouterPath::class.java)
-                if (classCache.containsKey(path.value) || methodCache.containsKey(path.value)) {
+                if (classCache.containsKey(path.url()) || methodCache.containsKey(path.url())) {
                     processingEnv.messager.printMessage(Diagnostic.Kind.ERROR,
                             String.format(Locale.getDefault(), "The key:%s with %s already exist",
-                                    path.value, element.toString()))
+                                    path.url(), element.toString()))
                 }
-                classCache.put(path.value, element)
+                classCache[path.url()] = element
                 processingEnv.messager.printMessage(Diagnostic.Kind.NOTE,
-                        String.format(Locale.getDefault(), path.value + " = " + element.toString()))
+                        String.format(Locale.getDefault(), path.url() + " = " + element.toString()))
             }
         }
 
         for (element in ElementFilter.methodsIn(routerSet)) {
             val path = element.getAnnotation(RouterPath::class.java)
-            if (classCache.containsKey(path.value) || methodCache.containsKey(path.value)) {
+            if (classCache.containsKey(path.url()) || methodCache.containsKey(path.url())) {
                 processingEnv.messager.printMessage(Diagnostic.Kind.ERROR,
                         String.format(Locale.getDefault(), "The key:%s with %s already exist",
-                                path.value, element.toString()))
+                                path.url(), element.toString()))
             }
-            methodCache.put(path.value, element)
+            methodCache[path.url()] = element
             processingEnv.messager.printMessage(Diagnostic.Kind.NOTE,
-                    String.format(Locale.getDefault(), path.value + " = " + element.toString()))
+                    String.format(Locale.getDefault(), path.url() + " = " + element.toString()))
         }
         try {
             generateClassRouter(className, classCache, methodCache)
@@ -82,6 +97,7 @@ class RouterProcessor : AbstractProcessor() {
         if (map.isEmpty() && methodMap.isEmpty()) {
             return
         }
+        val methodKeyCache = HashSet<String>()
         val builder = classBuilder(if (moduleName != null && moduleName.isNotEmpty())
             moduleName
         else
@@ -95,35 +111,44 @@ class RouterProcessor : AbstractProcessor() {
         builder.addMethod(mcBuilder.build())
         //
         val scBuilder = CodeBlock.builder()
-        scBuilder.addStatement("java.util.Map<String, Class<?>> classCache=new java.util.HashMap<>()")
+        scBuilder.addStatement("java.util.Set<String> methodPathCache=new java.util.HashSet<>()")
         for (key in map.keys) {
-            scBuilder.addStatement("classCache.put(\"$key\",${map[key]}.class)")
+            scBuilder.addStatement("Router.INSTANCE.registerUrl(\"$key\",${map[key]}.class)")
         }
-        methodMap.keys.forEach {
-            val method = methodMap[it]
-            if (checkHasNoErrors(method)) {
-                val classElement = method?.enclosingElement as TypeElement
-                scBuilder.beginControlFlow("Router.INSTANCE.registerIntercept(new RouterIntercept(\"$it\")")
-                        .beginControlFlow("public boolean launch($contextClassName context, $uriClassName uri, String taskId, $bundleClassName options)")
-                        .addStatement("${classElement.qualifiedName}.${method.simpleName}(${getParameterString(method.parameters)})")
-                        .addStatement("return true")
-                        .endControlFlow()
-                        .endControlFlow().addStatement(")")
+        if (methodMap.keys.isNotEmpty()) {
+            scBuilder.beginControlFlow("RouterIntercept methodRouteIntercept = new RouterIntercept()")
+                    .beginControlFlow("public boolean launch($contextClassName context, $uriClassName uri, $callbackClassName callback, $bundleClassName options, $lifeCycleClassName lifeCycle)")
+            scBuilder.beginControlFlow("switch(uri.getHost()+uri.getPath())")
+            methodMap.keys.forEach {
+                val method = methodMap[it]
+                if (checkHasNoErrors(method)) {
+                    val classElement = method?.enclosingElement as TypeElement
+                    scBuilder.addStatement("case \"$it\":")
+                            .addStatement("${classElement.qualifiedName}.${method.simpleName}(${getParameterString(method.parameters)})")
+                            .addStatement("return true")
+                    methodKeyCache.add(it)
+                }
             }
+            scBuilder.endControlFlow().addStatement("return false")
+                    .endControlFlow()
+                    .addStatement("}")
+            methodKeyCache.forEach {
+                scBuilder.addStatement("methodPathCache.add(\"$it\")")
+            }
+            scBuilder.addStatement("Router.INSTANCE.registerMethodIntercept(methodRouteIntercept,methodPathCache)")
         }
-        scBuilder.addStatement("Router.INSTANCE.init(classCache)")
-        if (processingEnv.options.containsKey(ATTACH_NAME)) run {
+        if (processingEnv.options.containsKey(ATTACH_NAME)) {
             assertIsEmpty(processingEnv.options[ATTACH_NAME])
             processingEnv.options[ATTACH_NAME]?.split(",")?.forEach {
                 scBuilder.addStatement(String.format(Locale.getDefault(),
                         "fm.qingting.router.%s.init()",
-                        processingEnv.options[ATTACH_NAME]))
+                       it))
             }
 
         }
         builder.addStaticBlock(scBuilder.build())
         val javaFile = JavaFile.builder("fm.qingting.router", builder.build()).build()
-        javaFile.writeTo(processingEnv.filer)
+        javaFile.writeTo(this.processingEnv.filer)
     }
 
     private fun assertIsEmpty(value: String?) {
@@ -163,17 +188,24 @@ class RouterProcessor : AbstractProcessor() {
                     }
                     result += "uri"
                 }
-                "java.lang.Integer" -> {
+                "fm.qingting.router.RouterTaskCallBack" -> {
                     if (!result.isEmpty()) {
                         result += ","
                     }
-                    result += "taskId"
+                    result += "callback"
                 }
+
                 bundleClassName.toString() -> {
                     if (!result.isEmpty()) {
                         result += ","
                     }
                     result += "options"
+                }
+                lifeCycleClassName.toString() -> {
+                    if (!result.isEmpty()) {
+                        result += ","
+                    }
+                    result += "lifeCycle"
                 }
             }
         }
@@ -181,9 +213,10 @@ class RouterProcessor : AbstractProcessor() {
     }
 
     companion object {
-        private val CLASS_NAME = "RouterContainer"
-        private val MODULE_NAME = "ModuleName"
-        private val ATTACH_NAME = "Include"
+        private const val CLASS_NAME = "RouterContainer"
+        private const val MODULE_NAME = "ModuleName"
+        private const val ATTACH_NAME = "Include"
+        private const val DEFAULT_HOST = "DefaultHost"
     }
 
 }

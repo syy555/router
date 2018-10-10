@@ -10,7 +10,4 @@ import fm.qingting.router.annotations.RouterPath
 class abc(context: Context?) : View(context) {
 
 
-
-
-
 }
